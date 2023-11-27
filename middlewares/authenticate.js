@@ -1,26 +1,46 @@
 const jwt = require("jsonwebtoken");
-const {User} = require("../models/user")
-const  HttpError  = require("../helpers/HttpError");
+const User = require("../models/user");
 
-const {SECRET_KEY} = process.env;
+function auth(req, res, next) {
+  const authHeader = req.headers["authorization"];
 
-const authenticate = async (req, res, next) => {
-  const { authorization = "" } = req.headers;
-  const [bearer, token] = authorization.split(" ");
+  if (typeof authHeader === "undefined") {
+    return res.status(401).send({ message: "Invalid token" });
+  }
+
+  const [bearer, token] = authHeader.split(" ", 2);
+
+  console.log({ bearer, token });
+
   if (bearer !== "Bearer") {
-    next(HttpError(401, "Not authorized"));
+    return res.status(401).send({ message: "Invalid token" });
   }
-  try {
-    const {id} = jwt.verify(token, SECRET_KEY)
-    const user = await User.findById(id)
-    if (!user || !user.token || user.token !== token){
-        next(HttpError(401, "Not authorized"))
-    }
-    req.user = user;
-    next();
-  } catch  {
-    next(HttpError(401, "Not authorized"));
-  }
-};
 
-module.exports = authenticate;
+  jwt.verify(token, process.env.SECRET_KEY, async (err, decode) => {
+    if (err) {
+      return res.status(401).send({ message: "Invalid token" });
+    }
+
+    try {
+      req.user = decode;
+
+      const user = await User.findById(decode.id).exec();
+
+      if (user === null) {
+        return res.status(401).send({ message: "Invalid token" });
+      }
+
+      if (user.token !== token) {
+        return res.status(401).send({ message: "Invalid token" });
+      }
+
+      req.user = { id: user._id, name: user.name };
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+}
+
+module.exports = auth;

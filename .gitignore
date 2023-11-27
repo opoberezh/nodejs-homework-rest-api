@@ -2,9 +2,15 @@ node_modules/
 .idea
 .vscode
 
+
 # dotenv invironment veriable filse
 .env
 .env.development.local
 .env.tast.local
 .env.production.local
 .env.local
+
+tmp/*
+!tmp/.gitkeep
+public/avatars/*
+!public/avatars/.gitkeep
