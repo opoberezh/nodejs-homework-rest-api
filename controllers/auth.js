@@ -1,10 +1,12 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const bcrypt = require("bcrypt");
+const crypto = require("node:crypto");
 const jwt = require("jsonwebtoken");
 const gravatar = require("gravatar");
 const User = require("../models/user");
 const { HttpError, ctrlWrapper } = require("../helpers");
+const sendEmail = require("../helpers/sendEmail");
 const { token } = require("morgan");
 const Jimp = require("jimp");
 require("dotenv").config();
@@ -23,9 +25,18 @@ const register = async (req, res) => {
   }
 
   const hashPassword = await bcrypt.hash(password, 10);
+  const verificationToken = crypto.randomUUID();
+  await sendEmail ({
+    to: email,
+    subject: "Welcome to your Phone Book",
+    html: `To confirm your registration please click on the <a href="http://localhost:3000/auth/verify/${verificationToken}">link</a>`,
+    text: `To confirm your registration, pleasde open the link http://localhost:3000/auth/verify/${verificationToken}`,
+  });
+
   const avatarURL = gravatar.url(email);
   const newUser = await User.create({
     email,
+    verificationToken,
     password: hashPassword,
     avatarURL,
   });
@@ -52,7 +63,9 @@ const login = async (req, res) => {
   const payload = {
     id: user._id,
   };
-
+  if (user.verify !== true) {
+    throw HttpError(401, "Your account is not verified");
+  }
   const token = jwt.sign(payload, SECRET_KEY, { expiresIn: "23h" });
   await User.findByIdAndUpdate(user._id, { token });
   res.send({
@@ -63,6 +76,46 @@ const login = async (req, res) => {
     },
   });
 };
+
+const verify = async (req, res) => {
+  const { verificationToken } = req.params;
+
+  const user = await User.findOne({ verificationToken }).exec();
+
+  if (user === null) {
+    throw HttpError(404, "Not found");
+  }
+  await User.findByIdAndUpdate(user._id, {
+    verify: true,
+    verificationToken: null,
+  });
+
+  res.status(200).send({ message:  "Verification successful" });
+};
+
+const resendVerificationEmail = async (req, res) => {
+  const { email } = req.body;
+  if (!email){
+    throw HttpError(400,"Missing required field email")
+  }
+  const user = await User.findOne({email}).exec();
+  if(!user){
+    throw HttpError(404,"User not found");
+  }
+  if(user.verify){
+    throw HttpError(400,"Verification has already been passed")
+  }
+  const newVerificationToken = crypto.randomUUID();
+  await User.findByIdAndUpdate(user._id, { verificationToken: newVerificationToken });
+
+  await sendEmail ({
+    to: email,
+      subject: "Resend Verification",
+      html: `To confirm your registration please click on the <a href="http://localhost:3000/auth/verify/${newVerificationToken}">link</a>`,
+      text: `To confirm your registration, please open the link http://localhost:3000/auth/verify/${newVerificationToken}`,
+  });
+  res.status(200).send({ message:  "Verification email sent" });
+}
 
 const getCurrent = async (req, res) => {
   const { email, subscription } = req.user;
@@ -78,6 +131,8 @@ const logout = async (req, res) => {
   await User.findByIdAndUpdate(_id, { token: "" });
   res.status(204).json({ message: "Logout success" });
 };
+
+
 
 const updateSubscription = async (req, res) => {
   const { subscription } = req.body;
@@ -135,4 +190,6 @@ module.exports = {
   updateSubscription: ctrlWrapper(updateSubscription),
   uploadAvatar: ctrlWrapper(uploadAvatar),
   getAvatar: ctrlWrapper(getAvatar),
+  verify: ctrlWrapper(verify),
+  resendVerificationEmail: ctrlWrapper(resendVerificationEmail),
 };
